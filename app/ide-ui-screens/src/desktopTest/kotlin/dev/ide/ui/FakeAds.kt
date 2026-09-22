@@ -41,4 +41,9 @@ class FakeAdHost : AdHost {
     }
 }
 
-fun fakeAdController(backend: IdeBackend): AdController = AdController(backend, FakeAdHost())
+/**
+ * AD-FREE FORK: ads now default to OFF (see the fork note on AdController.initialAdsEnabled), so the snapshots
+ * that exist to check an ad slot's gutter alignment have to opt in explicitly.
+ */
+fun fakeAdController(backend: IdeBackend): AdController =
+    AdController(backend, FakeAdHost()).apply { updateAdsEnabled(true) }

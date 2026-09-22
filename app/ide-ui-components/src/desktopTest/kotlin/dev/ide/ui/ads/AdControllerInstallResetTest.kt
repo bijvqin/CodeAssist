@@ -6,7 +6,6 @@ import dev.ide.ui.StubBackend
 import dev.ide.ui.backend.AdHost
 import dev.ide.ui.backend.AdPlacement
 import kotlin.test.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -26,44 +25,43 @@ private class StampedAdHost(override val installStamp: String?) : AdHost {
 }
 
 /**
- * The "show ads" choice is kept for every launch of one installation and reset to on by an install or update
- * (see [AdController]).
+ * AD-FREE FORK: ads default to off and an install or update never turns them back on — the inverse of
+ * upstream, which resets the choice to "on" once per [AdHost.installStamp] (see [AdController]). An explicit
+ * opt-in through the Settings toggle is still honoured and still survives updates.
  */
 class AdControllerInstallResetTest {
 
     @Test
-    fun choiceSurvivesRelaunchesOfTheSameInstall() {
+    fun adsAreOffOnAFreshInstall() {
+        val backend = PrefBackend()
+
+        assertFalse(AdController(backend, StampedAdHost("build-1")).adsEnabled)
+        // The stamp bookkeeping only existed to drive the reset, so nothing is written any more.
+        assertFalse(backend.prefs.containsKey(ADS_ENABLED_STAMP_PREF))
+    }
+
+    @Test
+    fun anUpdateDoesNotTurnAdsBackOn() {
         val backend = PrefBackend()
         AdController(backend, StampedAdHost("build-1")).updateAdsEnabled(false)
 
-        repeat(3) { assertFalse(AdController(backend, StampedAdHost("build-1")).adsEnabled) }
+        assertFalse(AdController(backend, StampedAdHost("build-2")).adsEnabled, "an update must not re-enable ads")
+        assertFalse(AdController(backend, StampedAdHost("build-3")).adsEnabled)
     }
 
     @Test
-    fun updateTurnsAdsBackOnOnce() {
+    fun anExplicitOptInSurvivesRelaunchesAndUpdates() {
         val backend = PrefBackend()
-        AdController(backend, StampedAdHost("build-1")).updateAdsEnabled(false)
+        AdController(backend, StampedAdHost("build-1")).updateAdsEnabled(true)
 
-        assertTrue(AdController(backend, StampedAdHost("build-2")).adsEnabled, "update should re-enable ads")
-        // ...and the user's next choice sticks until the NEXT update, not just until the next launch.
-        AdController(backend, StampedAdHost("build-2")).updateAdsEnabled(false)
-        assertFalse(AdController(backend, StampedAdHost("build-2")).adsEnabled)
+        repeat(3) { assertTrue(AdController(backend, StampedAdHost("build-1")).adsEnabled) }
+        assertTrue(AdController(backend, StampedAdHost("build-2")).adsEnabled, "opting in must stick across updates")
     }
 
     @Test
-    fun firstRunRecordsTheStampWithoutTouchingTheDefault() {
+    fun aHostWithoutAnInstallIdentityStaysOff() {
         val backend = PrefBackend()
-
-        assertTrue(AdController(backend, StampedAdHost("build-1")).adsEnabled)
-        assertEquals("build-1", backend.prefs[ADS_ENABLED_STAMP_PREF])
-    }
-
-    @Test
-    fun hostWithoutAnInstallIdentityNeverResets() {
-        val backend = PrefBackend()
-        AdController(backend, StampedAdHost(null)).updateAdsEnabled(false)
 
         assertFalse(AdController(backend, StampedAdHost(null)).adsEnabled)
-        assertFalse(backend.prefs.containsKey(ADS_ENABLED_STAMP_PREF))
     }
 }

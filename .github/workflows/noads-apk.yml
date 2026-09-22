@@ -1,0 +1,102 @@
+name: No-Ads APK
+
+# Builds the ad-free APK for this fork. Mirrors the upstream `apk.yml` job (same JDK, same Android SDK
+# packages) with two differences:
+#
+#   * it assembles a RELEASE-like variant, not `debug` — a `debuggable` build runs with ART optimizations
+#     off and the Compose runtime is disproportionately slow in that mode, which is no good for daily use;
+#   * it signs with THIS fork's own upload key when one is configured through repository secrets, so every
+#     build carries the same signature and installs over the previous one without losing project data.
+#
+# Signing: add these four repository secrets (Settings -> Secrets and variables -> Actions). With them the
+# job builds `release`; without them it falls back to `profile` (also non-debuggable, but signed with a
+# throwaway debug key that CI regenerates per run, so those APKs can NOT be installed over each other).
+#
+#   RELEASE_KEYSTORE_BASE64   base64 of your .jks/.keystore file
+#   RELEASE_STORE_PASSWORD    keystore password
+#   RELEASE_KEY_ALIAS         key alias
+#   RELEASE_KEY_PASSWORD      key password
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  JAVA_VERSION: "25"
+
+concurrency:
+  group: noads-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: assemble (ad-free)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # The exact platform AGP wants (android-36.1 for compileSdk=36 + compileSdkMinor=1), as upstream's
+      # apk.yml provisions it. sdkmanager is a no-op for components the runner already ships.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-36 platforms;android-36.1 build-tools;36.0.0"
+
+      # One-shot CI builds gain nothing from incremental compilation.
+      - name: Disable Kotlin incremental compilation (CI)
+        run: |
+          mkdir -p ~/.gradle
+          echo "kotlin.incremental=false" >> ~/.gradle/gradle.properties
+
+      # `release` needs a keystore; the build script reads keystore.properties from the repo root and
+      # silently produces an UNSIGNED apk when the file is absent, so pick the variant accordingly rather
+      # than shipping something that cannot be installed.
+      - name: Configure signing
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::No RELEASE_KEYSTORE_BASE64 secret - building the 'profile' variant with a throwaway debug key. It installs, but cannot be upgraded in place. See this workflow's header."
+            echo "variant=Profile" >> "$GITHUB_OUTPUT"
+            echo "dir=profile" >> "$GITHUB_OUTPUT"
+          else
+            echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
+            {
+              echo "storeFile=release.keystore"
+              echo "storePassword=$STORE_PASSWORD"
+              echo "keyAlias=$KEY_ALIAS"
+              echo "keyPassword=$KEY_PASSWORD"
+            } > keystore.properties
+            echo "variant=Release" >> "$GITHUB_OUTPUT"
+            echo "dir=release" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build ${{ steps.signing.outputs.dir }} APK
+        run: ./gradlew :ide-android:assemble${{ steps.signing.outputs.variant }} --console=plain --stacktrace
+
+      # Never leave the key material behind, including when the build failed.
+      - name: Shred signing material
+        if: always()
+        run: rm -f release.keystore keystore.properties
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeassist-noads-${{ steps.signing.outputs.dir }}-apk
+          path: app/ide-android/build/outputs/apk/${{ steps.signing.outputs.dir }}/*.apk
+          if-no-files-found: error
+          retention-days: 90

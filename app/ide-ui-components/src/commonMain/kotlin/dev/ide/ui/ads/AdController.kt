@@ -71,22 +71,17 @@ class AdController(
 }
 
 /**
- * The ads-enabled value a freshly created [AdController] starts from, resetting it to on once per installed
- * build. Ads being free to turn off only works if each update gets to ask again, so a stored "off" choice is
- * kept for as long as the app keeps the same [AdHost.installStamp] (every launch of one installation) and
- * dropped when that stamp changes (a fresh install or an update). The new stamp is recorded at the same time,
- * so the reset happens once and the user's next choice sticks until the next update. Hosts that can't identify
- * the build (a null stamp — desktop) never reset.
+ * The ads-enabled value a freshly created [AdController] starts from.
+ *
+ * AD-FREE FORK: upstream defaults this to `true` and additionally forces it back to `true` whenever the
+ * host's [AdHost.installStamp] changes (a fresh install or an update), so every update re-asks. This fork
+ * inverts both halves: ads default to OFF and an install/update never turns them back on. The stored
+ * preference is still honoured, so the Settings -> Privacy -> "Show ads" toggle keeps working for anyone who
+ * wants to opt back in and support the project. [ADS_ENABLED_STAMP_PREF] is consequently never written.
  */
-private fun initialAdsEnabled(backend: IdeBackend, host: AdHost): Boolean {
-    val stamp = host.installStamp
-    if (stamp != null && backend.settings.preference(ADS_ENABLED_STAMP_PREF) != stamp) {
-        backend.settings.setPreference(ADS_ENABLED_PREF, true.toString())
-        backend.settings.setPreference(ADS_ENABLED_STAMP_PREF, stamp)
-        return true
-    }
-    return backend.settings.preference(ADS_ENABLED_PREF)?.toBooleanStrictOrNull() ?: true
-}
+@Suppress("UNUSED_PARAMETER")
+private fun initialAdsEnabled(backend: IdeBackend, host: AdHost): Boolean =
+    backend.settings.preference(ADS_ENABLED_PREF)?.toBooleanStrictOrNull() ?: false
 
 /**
  * The active [AdController], or null when the UI is hosted without one (tests, or a screen rendered outside
